@@ -1,8 +1,6 @@
 package block
 
 import (
-	"fmt"
-
 	"github.com/micromdm/nanomdm/mdm"
 
 	"github.com/micromdm/nanolib/log/ctxlog"
@@ -11,23 +9,23 @@ import (
 // Authenticate clears the block and forwards if the block has
 // ClearOnAuthenticate set (i.e. "block until re-enrollment").
 func (s *Service) Authenticate(r *mdm.Request, m *mdm.Authenticate) error {
-	req, block, err := s.retrieveBlock(r, &m.Enrollment)
-	if err != nil {
-		return err
-	}
+	req, block := s.retrieveBlock(r, &m.Enrollment, "Authenticate")
 	if block != nil && block.ClearOnAuthenticate {
-		if err = s.store.RemoveBlock(req); err != nil {
-			return fmt.Errorf("block: removing block: %w", err)
+		logger := ctxlog.Logger(r.Context(), s.logger)
+		// fail open: a block that can't be removed must not stop re-enrollment
+		if err := s.store.RemoveBlock(req); err != nil {
+			logger.Info("msg", "removing block; forwarding", "id", req.ID, "request", "Authenticate", "err", err)
+		} else {
+			logger.Info(
+				"msg", "cleared block",
+				"id", req.ID,
+				"request", "Authenticate",
+				"style", block.Style,
+			)
 		}
-		ctxlog.Logger(r.Context(), s.logger).Info(
-			"msg", "cleared block",
-			"id", req.ID,
-			"request", "Authenticate",
-			"style", block.Style,
-		)
 		return s.next.Authenticate(r, m)
 	}
-	if err = s.check(r, &m.Enrollment, "Authenticate", false); err != nil {
+	if err := s.blockError(r, req, block, "Authenticate", false); err != nil {
 		return err
 	}
 	return s.next.Authenticate(r, m)

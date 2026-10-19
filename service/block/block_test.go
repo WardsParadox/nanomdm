@@ -231,24 +231,39 @@ func TestClearOnAuthenticate(t *testing.T) {
 	expectStatus(t, call(svc, "CommandAndReportResults", mdm.Enrollment{UDID: testUDID}), 0)
 }
 
-func TestStoreError(t *testing.T) {
+// TestStoreErrorFailsOpen checks that a store error forwards every request,
+// even for a blocked enrollment: a storage outage must not block the fleet.
+func TestStoreErrorFailsOpen(t *testing.T) {
 	store := newMemStore()
+	store.blocks[testUDID] = &storage.Block{Style: storage.StyleUnenroll}
 	store.err = errors.New("store error")
 	svc := New(&nextService{}, store)
 
-	err := call(svc, "CommandAndReportResults", mdm.Enrollment{UDID: testUDID})
-	if !errors.Is(err, store.err) {
-		t.Errorf("expected store error, have: %v", err)
+	for _, kind := range kinds {
+		t.Run(kind, func(t *testing.T) {
+			expectStatus(t, call(svc, kind, mdm.Enrollment{UDID: testUDID}), 0)
+		})
 	}
-
-	// TokenUpdate never consults the store
-	expectStatus(t, call(svc, "TokenUpdate", mdm.Enrollment{UDID: testUDID}), 0)
 }
 
-func TestInvalidEnrollment(t *testing.T) {
+// TestClearOnAuthenticateRemoveErrorFailsOpen checks that Authenticate is
+// still forwarded when the block can't be removed.
+func TestClearOnAuthenticateRemoveErrorFailsOpen(t *testing.T) {
+	store := &removeErrStore{memStore: newMemStore()}
+	store.blocks[testUDID] = &storage.Block{Style: storage.StyleUnenroll, ClearOnAuthenticate: true}
+	svc := New(&nextService{}, store)
+
+	expectStatus(t, call(svc, "Authenticate", mdm.Enrollment{UDID: testUDID}), 0)
+}
+
+// removeErrStore fails only RemoveBlock.
+type removeErrStore struct{ *memStore }
+
+func (s *removeErrStore) RemoveBlock(*mdm.Request) error { return errors.New("remove error") }
+
+// TestInvalidEnrollmentFailsOpen checks that an enrollment that can't be
+// normalized is forwarded; validating it is left to the next service.
+func TestInvalidEnrollmentFailsOpen(t *testing.T) {
 	svc := New(&nextService{}, newMemStore())
-	err := call(svc, "CommandAndReportResults", mdm.Enrollment{})
-	if err == nil || errors.Is(err, errNext) {
-		t.Errorf("expected error for empty enrollment, have: %v", err)
-	}
+	expectStatus(t, call(svc, "CommandAndReportResults", mdm.Enrollment{}), 0)
 }

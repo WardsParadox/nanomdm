@@ -47,6 +47,8 @@ Blocks are keyed by the device channel enrollment ID: blocking a device also blo
 
 `TokenUpdate` check-ins are never blocked, regardless of style. They complete enrollment and refresh the APNs push token, so blocking them would degrade an otherwise-intact enrollment.
 
+The block service fails open: if the block of an enrollment can't be looked up (for example the storage backend is unavailable), the error is logged and the request proceeds as if the enrollment were not blocked. Likewise, if a `clear_on_authenticate` block can't be removed, the `Authenticate` still proceeds. A storage outage therefore never rejects (or un-enrolls) devices.
+
 If a block has `clear_on_authenticate` set then an `Authenticate` check-in from the device removes the block and proceeds normally ("block until re-enrollment"). Otherwise the block stays until removed with the API. Note that a device that received an `unenroll` 401 stops checking in, so leaving its block in place is harmless.
 
 The SQL storage backends need the `blocked_enrollments` table before this switch is turned on. See the schema files (for MySQL, `schema.00012.sql` for existing databases).

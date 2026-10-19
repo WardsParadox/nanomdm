@@ -86,16 +86,24 @@ func (s *Service) normalizedRequest(r *mdm.Request, e *mdm.Enrollment) (*mdm.Req
 
 // retrieveBlock retrieves the block for the normalized enrollment of e.
 // The returned request is the normalized request.
-func (s *Service) retrieveBlock(r *mdm.Request, e *mdm.Enrollment) (*mdm.Request, *storage.Block, error) {
+//
+// It fails open: if the enrollment can't be normalized or the store
+// lookup fails, the error is logged and a nil block is returned so the
+// request is forwarded. A storage outage must not turn into rejected
+// (or, for the unenroll style, un-enrolled) devices across the fleet.
+func (s *Service) retrieveBlock(r *mdm.Request, e *mdm.Enrollment, kind string) (*mdm.Request, *storage.Block) {
+	logger := ctxlog.Logger(r.Context(), s.logger)
 	req, err := s.normalizedRequest(r, e)
 	if err != nil {
-		return nil, nil, fmt.Errorf("block: normalizing enrollment: %w", err)
+		logger.Info("msg", "normalizing enrollment; forwarding", "request", kind, "err", err)
+		return nil, nil
 	}
 	block, err := s.store.RetrieveBlock(req)
 	if err != nil {
-		return nil, nil, fmt.Errorf("block: retrieving block: %w", err)
+		logger.Info("msg", "retrieving block; forwarding", "id", req.ID, "request", kind, "err", err)
+		return req, nil
 	}
-	return req, block, nil
+	return req, block
 }
 
 // blockStatus returns the HTTP status to answer a blocked request with.
@@ -123,10 +131,12 @@ func blockStatus(block *storage.Block, isCommand bool) int {
 // check returns an HTTP status error if the enrollment of e is blocked.
 // The kind is used for logging the type of request.
 func (s *Service) check(r *mdm.Request, e *mdm.Enrollment, kind string, isCommand bool) error {
-	req, block, err := s.retrieveBlock(r, e)
-	if err != nil {
-		return err
-	}
+	req, block := s.retrieveBlock(r, e, kind)
+	return s.blockError(r, req, block, kind, isCommand)
+}
+
+// blockError returns an HTTP status error if block applies to the request.
+func (s *Service) blockError(r *mdm.Request, req *mdm.Request, block *storage.Block, kind string, isCommand bool) error {
 	status := blockStatus(block, isCommand)
 	if status == 0 {
 		return nil
@@ -138,7 +148,7 @@ func (s *Service) check(r *mdm.Request, e *mdm.Enrollment, kind string, isComman
 		"style", block.Style,
 		"status", status,
 	)
-	err = fmt.Errorf("%w: style %s", ErrBlocked, block.Style)
+	err := fmt.Errorf("%w: style %s", ErrBlocked, block.Style)
 	if block.Style == storage.StyleUnrecognizedDevice {
 		return service.NewHTTPStatusErrorWithBody(status, err, "application/json", unrecognizedDeviceBody)
 	}
