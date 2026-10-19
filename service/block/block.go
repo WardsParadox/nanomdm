@@ -18,6 +18,10 @@ import (
 // ErrBlocked is wrapped in the HTTP status error returned for blocked enrollments.
 var ErrBlocked = errors.New("enrollment blocked")
 
+// unrecognizedDeviceBody is the JSON error body for the unrecognized-device style.
+// See https://developer.apple.com/documentation/devicemanagement/errorunrecognizeddevice
+var unrecognizedDeviceBody = []byte(`{"code":"com.apple.unrecognized.device"}`)
+
 // normalize pulls out only the "device" ID (i.e. the "parent" of the)
 // MDM relationship regardless of enrollment type. This means a block
 // on a device channel also covers all of its user channels.
@@ -104,6 +108,8 @@ func blockStatus(block *storage.Block, isCommand bool) int {
 	switch block.Style {
 	case storage.StyleUnenroll:
 		return http.StatusUnauthorized
+	case storage.StyleUnrecognizedDevice:
+		return http.StatusForbidden
 	case storage.StyleServiceUnavailable:
 		return http.StatusServiceUnavailable
 	case storage.StyleCommandQueue:
@@ -132,5 +138,9 @@ func (s *Service) check(r *mdm.Request, e *mdm.Enrollment, kind string, isComman
 		"style", block.Style,
 		"status", status,
 	)
-	return service.NewHTTPStatusError(status, fmt.Errorf("%w: style %s", ErrBlocked, block.Style))
+	err = fmt.Errorf("%w: style %s", ErrBlocked, block.Style)
+	if block.Style == storage.StyleUnrecognizedDevice {
+		return service.NewHTTPStatusErrorWithBody(status, err, "application/json", unrecognizedDeviceBody)
+	}
+	return service.NewHTTPStatusError(status, err)
 }
