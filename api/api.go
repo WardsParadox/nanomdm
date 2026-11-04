@@ -86,11 +86,31 @@ func (pe *PushEnqueuer) EnqueueWithPush(ctx context.Context, command *mdm.Comman
 	}
 
 	if !noPush && !pe.noPush && r.EnqueueError == nil {
-		// TODO: only push to non-erroring enrollment IDs
-		doPush(ctx, r, pe.logger, pe.pusher, ids)
+		// only push to the enrollment IDs that enqueued without an error.
+		// a push for a failed enqueue wakes an enrollment that then checks
+		// in and finds no new command to collect.
+		if pushIDs := enqueuedIDs(r, ids); len(pushIDs) > 0 {
+			doPush(ctx, r, pe.logger, pe.pusher, pushIDs)
+		}
 	}
 
 	return r, code(r, len(ids)), nil
+}
+
+// enqueuedIDs filters ids down to the enrollment IDs that have no enqueue
+// error in r. The order of ids is preserved. If r has no per-enrollment
+// results then no command was enqueued and ids is returned unchanged.
+func enqueuedIDs(r *APIResult, ids []string) []string {
+	if r == nil || len(r.Status) < 1 {
+		return ids
+	}
+	enqueued := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if r.Status[id].EnqueueError == nil {
+			enqueued = append(enqueued, id)
+		}
+	}
+	return enqueued
 }
 
 // code translates an [APIResult] to an interger code.
