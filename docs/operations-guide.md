@@ -123,10 +123,12 @@ Options are specified as a comma-separated list of "key=value" pairs. The mysql 
   * This option sets the maximum amount of time a pooled connection may be reused. The value is a [Go duration string](https://pkg.go.dev/time#ParseDuration) such as `30s`, `3m`, or `1h`. When unset, connection lifetime is left at database/sql's default (connections are reused indefinitely). A value of `0` keeps connections forever.
 * `conn_max_idle_time=duration`
   * This option sets the maximum amount of time a pooled connection may sit idle before it is closed. The value is a duration string, as above. When unset, idle time is left at database/sql's default (idle connections are not closed by age). A value of `0` never closes connections due to idle time.
+* `max_open_conns=count`
+  * This option sets the maximum number of open connections to the database. When unset, or set to `0`, the pool size is left at database/sql's default of no limit: a burst of concurrent requests opens a connection per in-flight request until the database refuses them. Bounding the pool makes those requests wait on a connection instead, which the `wait count` and `wait duration` in [DB.Stats](https://pkg.go.dev/database/sql#DBStats) report. Size it against the database's own connection limit, divided by the number of NanoMDM instances sharing it.
 
 *Example:* `-storage mysql -storage-dsn nanomdm:nanomdm/mymdmdb -storage-options delete=1`
 
-*Example:* `-storage mysql -storage-dsn nanomdm:nanomdm/mymdmdb -storage-options conn_max_lifetime=30s,conn_max_idle_time=15s`
+*Example:* `-storage mysql -storage-dsn nanomdm:nanomdm/mymdmdb -storage-options conn_max_lifetime=30s,conn_max_idle_time=15s,max_open_conns=25`
 
 #### pgsql storage backend
 
@@ -187,7 +189,14 @@ This switch disables MDM client capability. This effecitvely turns this running 
 
 Specifies the "base" URL to send Declarative Management requests to. The full URL is constructed from this base URL appended with the type of Declarative Management ["Endpoint" request](https://developer.apple.com/documentation/devicemanagement/declarativemanagementrequest?language=objc) such as "status" or "declaration-items". Each HTTP request includes the NanoMDM enrollment ID as the HTTP header "X-Enrollment-ID". See [this blog post](https://micromdm.io/blog/wwdc21-declarative-management/) for more details.
 
-Note that the URL should likely have a trailing slash. Otherwise path elements of the URL may be cut off by Golang's relative URL path resolver.
+The base URL should end with a slash: the Endpoint is appended after the last slash in its path. Any query string or fragment in the base URL is dropped. The Endpoint is treated as an unescaped path: characters such as "%", "?", and "#" are escaped, and Endpoints with empty, ".", or ".." path segments are rejected.
+
+For example, with a base URL of `https://ddm.example.com/v1/dm/`:
+
+* An Endpoint of `tokens` requests `https://ddm.example.com/v1/dm/tokens`
+* An Endpoint of `declaration/configuration/ABC` requests `https://ddm.example.com/v1/dm/declaration/configuration/ABC`
+
+See the [path tests](../service/dmhook/dmhook_test.go) for further examples.
 
 ### -dm-send-hmac-key string
 
